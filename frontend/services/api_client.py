@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List
 
 import requests
@@ -8,8 +9,11 @@ DEFAULT_BACKEND_URL = "http://localhost:8000"
 
 
 def _backend_url() -> str:
+    configured_url = os.getenv("BACKEND_URL", "").strip()
+    if configured_url:
+        return configured_url.rstrip("/")
     try:
-        return st.secrets["backend"]["url"]
+        return st.secrets["backend"]["url"].rstrip("/")
     except (KeyError, FileNotFoundError):
         return DEFAULT_BACKEND_URL
 

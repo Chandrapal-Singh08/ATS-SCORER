@@ -16,9 +16,16 @@ APP_TITLE='ATS RESUME ANALYZER API'
 APP_VERSION='1.0.0'
 APP_DESCRIPTION='analyse resumes against job description using nlp + ml'
 
-ALLOWED_ORIGINS = [
-    'https://appapppy-ktwxupi73vqhjzweksze9d.streamlit.app/'
-]  
+_LOCAL_ORIGINS = [
+    "http://localhost:8501",
+    "http://127.0.0.1:8501",
+]
+_DEPLOYED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+ALLOWED_ORIGINS = list(dict.fromkeys([*_LOCAL_ORIGINS, *_DEPLOYED_ORIGINS]))
 
 #file 
 MAX_FILE_SIZE_MB=5
@@ -34,7 +41,7 @@ SUPPORTED_MIME_TYPES = {
 SUPPORTED_EXTENSIONS = {'.pdf', '.doc', '.docx'}
 
 SPACY_MODEL_PRIMARY="en_core_web_md" #better accuracy
-SPACY_MODEL_SECONDARY='"en_core_web_sm' 
+SPACY_MODEL_SECONDARY = "en_core_web_sm"
 SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL", "all-MiniLM-L6-v2")
 
 # Score component weights — this is business logic treated as config
@@ -51,5 +58,4 @@ SUPABASE_KEY       = os.getenv('SUPABASE_KEY', '')          # service_role — D
 SUPABASE_ANON_KEY  = os.getenv('SUPABASE_ANON_KEY', '')     # public anon — frontend auth calls
 SUPABASE_JWT_SECRET= os.getenv('SUPABASE_JWT_SECRET', '')   # used by backend to verify access tokens
 GROQ_API_KEY       = os.getenv('GROQ_API_KEY', '')
-
 
