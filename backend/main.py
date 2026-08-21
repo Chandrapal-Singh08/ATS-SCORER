@@ -73,3 +73,52 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down ATS Resume Analyzer API...")
+
+
+# ---------------- FastAPI App ---------------- #
+
+app = FastAPI(
+    title=APP_TITLE,
+    description=APP_DESCRIPTION,
+    version=APP_VERSION,
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router)
+
+
+@app.get("/")
+async def root():
+    return {
+        "name": "ATS Resume Analyzer API",
+        "version": APP_VERSION,
+        "status": "running",
+        "endpoints": {
+            "POST /api/v1/analyze-resume": "Analyze Resume",
+            "GET /api/v1/history": "Resume History",
+            "DELETE /api/v1/history/{id}": "Delete History Entry",
+            "GET /api/v1/health": "Health Check",
+            "POST /api/v1/generate-pdf": "Generate PDF Report",
+        },
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "backend.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )
