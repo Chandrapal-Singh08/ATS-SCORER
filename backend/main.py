@@ -22,23 +22,42 @@ logger = logging.getLogger("ats_resume_scorer")
 async def lifespan(app: FastAPI):
     logger.info("Starting ATS Resume Analyzer API...")
 
-    # ---------- Load spaCy ----------
     import spacy
 
     try:
         logger.info(f"Loading spaCy model: {SPACY_MODEL_PRIMARY}")
-        app.state.nlp = spacy.load(SPACY_MODEL_PRIMARY)
+
+        # Load a lighter spaCy pipeline to save memory on Render Free.
+        app.state.nlp = spacy.load(
+            SPACY_MODEL_PRIMARY,
+            exclude=[
+                "parser",
+                "lemmatizer",
+                "attribute_ruler",
+                "tok2vec",
+            ],
+        )
+
         logger.info(f"Loaded {SPACY_MODEL_PRIMARY}")
 
     except OSError:
         logger.warning(
             f"{SPACY_MODEL_PRIMARY} not found — falling back to {SPACY_MODEL_SECONDARY}"
         )
-        app.state.nlp = spacy.load(SPACY_MODEL_SECONDARY)
+
+        app.state.nlp = spacy.load(
+            SPACY_MODEL_SECONDARY,
+            exclude=[
+                "parser",
+                "lemmatizer",
+                "attribute_ruler",
+                "tok2vec",
+            ],
+        )
+
         logger.info(f"Loaded {SPACY_MODEL_SECONDARY}")
 
-    # Do NOT load SentenceTransformer during startup.
-    # It will be loaded only when needed.
+    # SentenceTransformer is loaded lazily on the first API request.
     app.state.embedder = None
 
     logger.info("API started successfully.")
@@ -87,9 +106,10 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
+    # Used only for local development.
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,   # Local development only
+        reload=True,
     )
