@@ -2,6 +2,7 @@ import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 
 from backend.api.auth import get_current_user
 from backend.core.model_loader import get_embedder
@@ -17,15 +18,6 @@ logger = logging.getLogger("ats_resume_scorer")
 router = APIRouter(prefix="/api/v1", tags=["Analysis"])
 
 
-def _clean(text: str):
-    for prefix in ("✅", "🌟", "❌", "⚠️", "📝", "🔴", "🟡", "🟢", "🟠", "👍"):
-        text = text.lstrip(prefix)
-    return text.strip()
-
-
-# --------------------------------------------------------------------
-# Resume Analysis Endpoint
-# --------------------------------------------------------------------
 @router.post("/analyze-resume", response_model=AnalysisResponse)
 async def analyze_resume(
     request: Request,
@@ -34,70 +26,57 @@ async def analyze_resume(
 ):
     logger.info("=" * 60)
     logger.info("ANALYZE RESUME REQUEST RECEIVED")
-    logger.info(f"Filename: {resume.filename}")
-    logger.info(f"Job description length: {len(job_description)}")
+    logger.info(f"Resume File: {resume.filename}")
+    logger.info(f"Job Description Length: {len(job_description)}")
 
     user_id = "debug-user"
 
-    # ------------------------------------------------------------
-    # Step 1 — Load NLP
-    # ------------------------------------------------------------
-    logger.info("STEP 1: Loading spaCy pipeline from app state.")
+    # ---------------- STEP 1 ---------------- #
+    logger.info("STEP 1: Loading spaCy model")
     nlp = request.app.state.nlp
-    logger.info("spaCy pipeline loaded successfully.")
 
-    # ------------------------------------------------------------
-    # Step 2 — Load SentenceTransformer lazily
-    # ------------------------------------------------------------
-    logger.info("STEP 2: Loading SentenceTransformer model.")
+    # ---------------- STEP 2 ---------------- #
+    logger.info("STEP 2: Loading SentenceTransformer")
     try:
         embedder = get_embedder()
-        logger.info("SentenceTransformer loaded successfully.")
+        logger.info("SentenceTransformer loaded.")
     except Exception as exc:
-        logger.exception("SentenceTransformer failed to load.")
+        logger.exception("SentenceTransformer failed.")
         raise HTTPException(
             status_code=500,
-            detail=f"Embedder load failed: {exc}",
+            detail=f"Embedder failed: {exc}",
         )
 
-    # ------------------------------------------------------------
-    # Step 3 — Read uploaded resume
-    # ------------------------------------------------------------
-    logger.info("STEP 3: Reading uploaded resume.")
+    # ---------------- STEP 3 ---------------- #
+    logger.info("STEP 3: Reading uploaded resume")
     try:
         file_bytes = await resume.read()
         filename = resume.filename or "resume"
         logger.info(f"Resume size: {len(file_bytes)} bytes")
     except Exception as exc:
-        logger.exception("Failed to read uploaded resume.")
+        logger.exception("Failed reading uploaded resume.")
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to read uploaded file: {exc}",
+            detail=f"Could not read uploaded file: {exc}",
         )
 
-    # ------------------------------------------------------------
-    # Step 4 — Parse Resume
-    # ------------------------------------------------------------
-    logger.info("STEP 4: Parsing resume.")
+    # ---------------- STEP 4 ---------------- #
+    logger.info("STEP 4: Parsing resume")
     try:
         from backend.services.resume_parser import parse_resume_file
 
         resume_text, metadata = parse_resume_file(file_bytes, filename)
 
-        logger.info(f"Resume parsed successfully.")
-        logger.info(f"Characters extracted: {len(resume_text)}")
-
+        logger.info(f"Resume parsed. Characters extracted: {len(resume_text)}")
     except Exception as exc:
         logger.exception("Resume parsing failed.")
         raise HTTPException(
             status_code=422,
-            detail=f"Could not parse resume: {exc}",
+            detail=f"Resume parsing failed: {exc}",
         )
 
-    # ------------------------------------------------------------
-    # Step 5 — Full ATS Analysis
-    # ------------------------------------------------------------
-    logger.info("STEP 5: Starting ATS analysis.")
+    # ---------------- STEP 5 ---------------- #
+    logger.info("STEP 5: Running complete ATS analysis")
     try:
         from backend.services.resume_analyzer import analyze_full_resume
 
@@ -108,21 +87,19 @@ async def analyze_resume(
             job_description=job_description,
         )
 
-        logger.info("ATS analysis completed successfully.")
-
+        logger.info("ATS analysis completed.")
     except Exception as exc:
         logger.exception("ATS analysis pipeline failed.")
         raise HTTPException(
             status_code=500,
-            detail=f"Analysis pipeline failed: {exc}",
+            detail=f"Analysis failed: {exc}",
         )
 
-    # ------------------------------------------------------------
-    # Step 6 — JD Comparison Object
-    # ------------------------------------------------------------
-    logger.info("STEP 6: Preparing JD comparison response.")
+    # ---------------- STEP 6 ---------------- #
+    logger.info("STEP 6: Preparing JD comparison")
 
     jd_comparison_result = None
+
     if result.get("jd_comparison"):
         jd = result["jd_comparison"]
 
@@ -136,20 +113,18 @@ async def analyze_resume(
 
     detailed_feedback = result.get("detailed_feedback", [])
 
-    svd_raw = result.get("skill_validation_details") or {}
+    svd = result.get("skill_validation_details", {})
 
     skill_validation_details = SkillValidationDetails(
-        validated=svd_raw.get("validated", []),
-        unvalidated=svd_raw.get("unvalidated", []),
-        total=svd_raw.get("total", 0),
-        validated_count=svd_raw.get("validated_count", 0),
-        validation_pct=svd_raw.get("validation_pct", 0.0),
+        validated=svd.get("validated", []),
+        unvalidated=svd.get("unvalidated", []),
+        total=svd.get("total", 0),
+        validated_count=svd.get("validated_count", 0),
+        validation_pct=svd.get("validation_pct", 0.0),
     )
 
-    # ------------------------------------------------------------
-    # Step 7 — Build API Response
-    # ------------------------------------------------------------
-    logger.info("STEP 7: Building API response.")
+    # ---------------- STEP 7 ---------------- #
+    logger.info("STEP 7: Creating response object")
 
     response = AnalysisResponse(
         ATS_score=result["ats_score"],
@@ -161,9 +136,7 @@ async def analyze_resume(
 
         # Backward compatibility
         ats_score=result["ats_score"],
-        keyword_match=jd_comparison_result.match_percentage
-        if jd_comparison_result
-        else 0.0,
+        keyword_match=jd_comparison_result.match_percentage if jd_comparison_result else 0.0,
         missing_keywords=result.get("missing_keywords", []),
         matched_keywords=result.get("matched_keywords", []),
         skills=list(result.get("skills", [])[:20]),
@@ -171,30 +144,28 @@ async def analyze_resume(
         interpretation=result.get("interpretation", ""),
     )
 
-    logger.info("Response object created successfully.")
+    logger.info("Response object created.")
 
-    # ------------------------------------------------------------
-    # Step 8 — Save Analysis History (Non-blocking)
-    # ------------------------------------------------------------
-    logger.info("STEP 8: Saving analysis history.")
+    # ---------------- STEP 8 ---------------- #
+    logger.info("STEP 8: Saving analysis history")
+
     try:
         from backend.database.supabase_db import save_analysis
 
         await save_analysis(user_id, filename, result)
-        logger.info("Analysis history saved successfully.")
-
+        logger.info("History saved successfully.")
     except Exception as exc:
-        logger.warning(f"History save failed (ignored): {exc}")
+        logger.warning(f"History save skipped: {exc}")
 
-    logger.info("ANALYZE RESUME COMPLETED SUCCESSFULLY")
+    logger.info("ANALYZE RESUME FINISHED SUCCESSFULLY")
     logger.info("=" * 60)
 
     return response
 
 
-# --------------------------------------------------------------------
-# Health Check
-# --------------------------------------------------------------------
+# ----------------------------------------------------
+# HEALTH CHECK
+# ----------------------------------------------------
 @router.get("/health")
 async def health_check(request: Request):
     return {
@@ -205,21 +176,20 @@ async def health_check(request: Request):
     }
 
 
-# --------------------------------------------------------------------
-# History
-# --------------------------------------------------------------------
+# ----------------------------------------------------
+# HISTORY
+# ----------------------------------------------------
 @router.get("/history")
 async def get_history(user_id: str = Depends(get_current_user)):
     from backend.database.supabase_db import get_user_history
 
     try:
         return await get_user_history(user_id)
-
     except Exception as exc:
         logger.exception("History fetch failed.")
         raise HTTPException(
             status_code=500,
-            detail=f"Could not load history: {exc}",
+            detail=f"History fetch failed: {exc}",
         )
 
 
@@ -236,31 +206,29 @@ async def delete_history_entry(
         if not success:
             raise HTTPException(
                 status_code=404,
-                detail="Analysis not found or not owned by this user.",
+                detail="Analysis not found.",
             )
 
         return {"status": "deleted", "id": analysis_id}
 
     except HTTPException:
         raise
-
     except Exception as exc:
         logger.exception("History delete failed.")
         raise HTTPException(
             status_code=500,
-            detail=f"Could not delete history: {exc}",
+            detail=f"Delete failed: {exc}",
         )
 
 
-# --------------------------------------------------------------------
-# PDF Generation
-# --------------------------------------------------------------------
+# ----------------------------------------------------
+# PDF GENERATION
+# ----------------------------------------------------
 @router.post("/generate-pdf")
 async def generate_pdf(
     data: AnalysisResponse,
     user_id: str = Depends(get_current_user),
 ):
-    from fastapi.responses import Response
     from backend.services.report_generator import generate_html_reports
     from backend.services.pdf_export import generate_combined_pdf
 
@@ -280,7 +248,7 @@ async def generate_pdf(
         logger.exception("PDF generation failed.")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate PDF: {exc}",
+            detail=f"PDF generation failed: {exc}",
         )
 
 
@@ -289,7 +257,6 @@ async def generate_history_pdf(
     analysis_id: str,
     user_id: str = Depends(get_current_user),
 ):
-    from fastapi.responses import Response
     from backend.database.supabase_db import get_user_history
     from backend.services.report_generator import generate_html_reports
     from backend.services.pdf_export import generate_combined_pdf
@@ -320,5 +287,5 @@ async def generate_history_pdf(
         logger.exception("History PDF generation failed.")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate history PDF: {exc}",
+            detail=f"History PDF generation failed: {exc}",
         )
