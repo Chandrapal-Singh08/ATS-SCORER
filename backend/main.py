@@ -1,6 +1,4 @@
 import logging
-import os
-import psutil
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,7 +12,6 @@ from backend.core.config import (
     SPACY_MODEL_PRIMARY,
     SPACY_MODEL_SECONDARY,
 )
-
 from backend.api.routes import router
 
 logger = logging.getLogger("ats_resume_scorer")
@@ -24,14 +21,7 @@ logger = logging.getLogger("ats_resume_scorer")
 async def lifespan(app: FastAPI):
     import spacy
 
-    process = psutil.Process(os.getpid())
-
-    def log_memory(stage):
-        ram = process.memory_info().rss / 1024 / 1024
-        logger.info(f"[MEMORY] {stage}: {ram:.1f} MB")
-
-    logger.info("Starting ATS Resume Analyzer API...")
-    log_memory("Startup")
+    logger.info("=== Startup begins ===")
 
     try:
         logger.info(f"Loading spaCy model: {SPACY_MODEL_PRIMARY}")
@@ -46,12 +36,12 @@ async def lifespan(app: FastAPI):
             ],
         )
 
-        log_memory("After spaCy")
+        logger.info("spaCy loaded successfully.")
 
-    except OSError:
-        logger.warning(
-            f"{SPACY_MODEL_PRIMARY} not found — falling back to {SPACY_MODEL_SECONDARY}"
-        )
+    except Exception as e:
+        logger.exception(f"Failed to load spaCy: {e}")
+
+        logger.info(f"Trying fallback model: {SPACY_MODEL_SECONDARY}")
 
         app.state.nlp = spacy.load(
             SPACY_MODEL_SECONDARY,
@@ -63,19 +53,18 @@ async def lifespan(app: FastAPI):
             ],
         )
 
-        log_memory("After fallback spaCy")
+        logger.info("Fallback spaCy loaded successfully.")
 
+    # Lazy loading placeholder
     app.state.embedder = None
-    log_memory("After embedder placeholder")
 
-    logger.info("API started successfully.")
+    logger.info("Embedder placeholder created.")
+    logger.info("=== Startup complete ===")
 
     yield
 
     logger.info("Shutting down ATS Resume Analyzer API...")
 
-
-# ---------------- FastAPI App ---------------- #
 
 app = FastAPI(
     title=APP_TITLE,
@@ -100,22 +89,16 @@ app.include_router(router)
 @app.get("/")
 async def root():
     return {
-        "name": "ATS Resume Analyzer API",
+        "name": APP_TITLE,
         "version": APP_VERSION,
         "status": "running",
-        "endpoints": {
-            "POST /api/v1/analyze-resume": "Analyze Resume",
-            "GET /api/v1/history": "Resume History",
-            "DELETE /api/v1/history/{id}": "Delete History Entry",
-            "GET /api/v1/health": "Health Check",
-            "POST /api/v1/generate-pdf": "Generate PDF Report",
-        },
     }
 
 
 if __name__ == "__main__":
     import uvicorn
 
+    # Local development only
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",
