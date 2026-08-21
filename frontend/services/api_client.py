@@ -5,7 +5,7 @@ import requests
 import streamlit as st
 
 
-DEFAULT_BACKEND_URL = "http://localhost:8000"
+DEFAULT_BACKEND_URL = "https://ats-scorer-1-fbig.onrender.com"
 
 
 def _backend_url() -> str:
