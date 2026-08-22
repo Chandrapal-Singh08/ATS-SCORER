@@ -1,3 +1,34 @@
+import logging
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+
+from backend.models.schemas import (
+    AnalysisResponse,
+    ComponentScores,
+    JDComparison,
+    SkillValidationDetails,
+)
+from backend.core.model_loader import get_embedder
+from backend.services.resume_analyzer import analyze_full_resume
+from backend.services.resume_parser import parse_resume_file
+
+logger = logging.getLogger("ats_resume_scorer")
+
+# ✅ FIX: Add /api/v1 prefix
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["Analysis"],
+)
+
+
+@router.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "message": "ATS Resume Scorer Backend is running",
+    }
+
+
 @router.post("/analyze-resume", response_model=AnalysisResponse)
 async def analyze_resume(
     request: Request,
@@ -9,25 +40,29 @@ async def analyze_resume(
     user_id = "debug-user"
 
     try:
-        logger.info("Step 1: Loading spaCy")
+        # STEP 1 — Load spaCy model
+        logger.info("Step 1: Loading spaCy model")
         nlp = request.app.state.nlp
 
-        logger.info("Step 2: Loading Embedder")
+        # STEP 2 — Load SentenceTransformer lazily
+        logger.info("Step 2: Loading embedder")
         embedder = get_embedder()
 
-        logger.info("Step 3: Reading Resume")
+        # STEP 3 — Read uploaded resume
+        logger.info("Step 3: Reading uploaded resume")
         file_bytes = await resume.read()
-        filename = resume.filename or "resume"
+        filename = resume.filename or "resume.pdf"
 
-        from backend.services.resume_parser import parse_resume_file
+        resume_text, metadata = parse_resume_file(file_bytes, filename)
 
-        resume_text, _metadata = parse_resume_file(file_bytes, filename)
+        logger.info(
+            "Resume parsed successfully | filename=%s | chars=%d",
+            filename,
+            len(resume_text),
+        )
 
-        logger.info(f"Resume parsed successfully ({len(resume_text)} chars).")
-
-        logger.info("Step 4: Starting Resume Analysis")
-
-        from backend.services.resume_analyzer import analyze_full_resume
+        # STEP 4 — Analyze resume
+        logger.info("Step 4: Starting resume analysis")
 
         result = analyze_full_resume(
             resume_text=resume_text,
@@ -36,46 +71,37 @@ async def analyze_resume(
             job_description=job_description,
         )
 
-        logger.info("Resume analysis completed.")
+        logger.info("Resume analysis completed successfully.")
 
+        # STEP 5 — JD comparison
         jd_comparison_result = None
 
         if result.get("jd_comparison"):
+            jd = result["jd_comparison"]
+
             jd_comparison_result = JDComparison(
-                match_percentage=round(
-                    float(result["jd_comparison"].get("match_percentage", 0.0)),
-                    1,
-                ),
-                semantic_similarity=round(
-                    float(result["jd_comparison"].get("semantic_similarity", 0.0)),
-                    3,
-                ),
-                matched_keywords=result["jd_comparison"].get(
-                    "matched_keywords",
-                    [],
-                )[:20],
-                missing_keywords=result["jd_comparison"].get(
-                    "missing_keywords",
-                    [],
-                )[:15],
-                skills_gap=result["jd_comparison"].get("skills_gap", [])[:10],
+                match_percentage=round(float(jd.get("match_percentage", 0.0)), 1),
+                semantic_similarity=round(float(jd.get("semantic_similarity", 0.0)), 3),
+                matched_keywords=jd.get("matched_keywords", [])[:20],
+                missing_keywords=jd.get("missing_keywords", [])[:15],
+                skills_gap=jd.get("skills_gap", [])[:10],
             )
 
+        # STEP 6 — Skill validation
         svd = result.get("skill_validation_details", {})
 
         response = AnalysisResponse(
-            ATS_score=result["ats_score"],
-            component_scores=ComponentScores(**result["component_scores"]),
-            issues_summary=result["issues_summary"],
-            detailed_feedback=result["detailed_feedback"],
+            ATS_score=result.get("ats_score", 0),
+            component_scores=ComponentScores(**result.get("component_scores", {})),
+            issues_summary=result.get("issues_summary", []),
+            detailed_feedback=result.get("detailed_feedback", []),
             jd_match_analysis=jd_comparison_result,
             skill_validation_details=SkillValidationDetails(**svd),
 
-            ats_score=result["ats_score"],
+            # Backward compatibility
+            ats_score=result.get("ats_score", 0),
             keyword_match=(
-                jd_comparison_result.match_percentage
-                if jd_comparison_result
-                else 0
+                jd_comparison_result.match_percentage if jd_comparison_result else 0
             ),
             matched_keywords=result.get("matched_keywords", []),
             missing_keywords=result.get("missing_keywords", []),
@@ -89,17 +115,22 @@ async def analyze_resume(
         try:
             from backend.database.supabase_db import save_analysis
 
-            await save_analysis(user_id, filename, result)
+            await save_analysis(
+                user_id=user_id,
+                filename=filename,
+                analysis_result=result,
+            )
+            logger.info("Analysis history saved successfully.")
 
         except Exception as history_error:
-            logger.warning(f"History save skipped: {history_error}")
+            logger.warning("History save skipped: %s", history_error)
 
-        logger.info("Analysis request completed successfully.")
+        logger.info("========== ANALYSIS REQUEST COMPLETED ==========")
 
         return response
 
     except Exception as exc:
-        logger.exception("ANALYSIS FAILED")
+        logger.exception("========== ANALYSIS FAILED ==========")
         raise HTTPException(
             status_code=500,
             detail=f"Analysis pipeline failed: {str(exc)}",
