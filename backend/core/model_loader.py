@@ -7,19 +7,17 @@ from backend.core.config import SENTENCE_TRANSFORMER_MODEL
 
 logger = logging.getLogger("ats_resume_scorer")
 
-# Limit CPU threads (helps Render Free memory/CPU usage)
+# Reduce CPU + memory usage on Render
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
 
-# Global singleton
 _embedder = None
 
 
 def get_embedder():
     """
-    Lazily load the SentenceTransformer model.
-    The model loads only on the first /analyze-resume request,
-    not during FastAPI startup.
+    Lazily loads SentenceTransformer only when needed.
+    This prevents Render from downloading/loading the model during startup.
     """
     global _embedder
 
@@ -31,7 +29,7 @@ def get_embedder():
             device="cpu",
         )
 
-        # Reduce memory usage
+        # Reduce RAM usage
         _embedder.max_seq_length = 256
 
         logger.info("SentenceTransformer model loaded successfully.")
