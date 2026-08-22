@@ -1,14 +1,5 @@
 from typing import Dict, List, Optional
 
-from backend.services.feedback_engine import (
-    analyze_issues,
-    generate_issues_summary,
-)
-from backend.services.ats_scorer import (
-    calculate_overall_score,
-    validate_skills_with_projects,
-)
-
 
 def analyze_full_resume(
     resume_text: str,
@@ -25,12 +16,24 @@ def analyze_full_resume(
 
     import logging
 
-    # Lazy imports (important for Render memory optimization)
+    # ---------------- LAZY IMPORTS ---------------- #
+    from backend.services.feedback_engine import (
+        analyze_issues,
+        generate_issues_summary,
+    )
+
+    from backend.services.ats_scorer import (
+        calculate_overall_score,
+        validate_skills_with_projects,
+    )
+
     from backend.services.groq_parser import (
         parse_resume,
         parse_job_description,
     )
+
     from backend.services.jd_matcher import compare_resume_with_jd
+
     from backend.utils.file_utils import (
         get_default_grammar_results,
         get_default_location_results,
@@ -82,7 +85,7 @@ def analyze_full_resume(
         embedder=embedder,
     )
 
-    # ---------------- Job Description Matching ---------------- #
+    # ---------------- JD Matching ---------------- #
 
     jd_comparison_result = None
     jd_keywords = None
@@ -109,12 +112,12 @@ def analyze_full_resume(
             nlp=nlp,
         )
 
-    # ---------------- Grammar & Location ---------------- #
+    # ---------------- Grammar / Location ---------------- #
 
     grammar_results = get_default_grammar_results()
     location_results = get_default_location_results()
 
-    # ---------------- ATS Scoring ---------------- #
+    # ---------------- ATS Score ---------------- #
 
     scores = calculate_overall_score(
         text=resume_text,

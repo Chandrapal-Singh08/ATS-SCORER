@@ -1,9 +1,11 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.routes import router
 from backend.core.config import (
     ALLOWED_ORIGINS,
     APP_DESCRIPTION,
@@ -12,16 +14,20 @@ from backend.core.config import (
     SPACY_MODEL_PRIMARY,
     SPACY_MODEL_SECONDARY,
 )
-from backend.api.routes import router
 
+# Logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ats_resume_scorer")
 
 
+# -------------------------------------------------------
+# Startup / Shutdown
+# -------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import spacy
 
-    logger.info("=== Startup begins ===")
+    logger.info("========== ATS BACKEND STARTUP ==========")
 
     try:
         logger.info(f"Loading spaCy model: {SPACY_MODEL_PRIMARY}")
@@ -36,12 +42,12 @@ async def lifespan(app: FastAPI):
             ],
         )
 
-        logger.info("spaCy loaded successfully.")
+        logger.info("spaCy model loaded successfully.")
 
-    except Exception as e:
-        logger.exception(f"Failed to load spaCy: {e}")
-
-        logger.info(f"Trying fallback model: {SPACY_MODEL_SECONDARY}")
+    except OSError:
+        logger.warning(
+            f"{SPACY_MODEL_PRIMARY} not found. Falling back to {SPACY_MODEL_SECONDARY}"
+        )
 
         app.state.nlp = spacy.load(
             SPACY_MODEL_SECONDARY,
@@ -53,19 +59,23 @@ async def lifespan(app: FastAPI):
             ],
         )
 
-        logger.info("Fallback spaCy loaded successfully.")
+        logger.info("Fallback spaCy model loaded successfully.")
 
-    # Lazy loading placeholder
+    # IMPORTANT:
+    # SentenceTransformer is NOT loaded here.
+    # It will be loaded only when /analyze-resume is called.
     app.state.embedder = None
 
-    logger.info("Embedder placeholder created.")
-    logger.info("=== Startup complete ===")
+    logger.info("Startup completed successfully.")
 
     yield
 
-    logger.info("Shutting down ATS Resume Analyzer API...")
+    logger.info("========== ATS BACKEND SHUTDOWN ==========")
 
 
+# -------------------------------------------------------
+# FastAPI App
+# -------------------------------------------------------
 app = FastAPI(
     title=APP_TITLE,
     description=APP_DESCRIPTION,
@@ -75,6 +85,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -83,25 +94,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register API routes
 app.include_router(router)
 
 
+# -------------------------------------------------------
+# Root Endpoint
+# -------------------------------------------------------
 @app.get("/")
 async def root():
     return {
-        "name": APP_TITLE,
-        "version": APP_VERSION,
+        "name": "ATS Resume Analyzer API",
         "status": "running",
+        "version": APP_VERSION,
     }
 
 
+# -------------------------------------------------------
+# Local Run
+# -------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
 
-    # Local development only
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=int(os.getenv("PORT", 8000)),
     )

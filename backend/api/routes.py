@@ -3,15 +3,12 @@ import traceback
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
-from backend.core.model_loader import get_embedder
 from backend.models.schemas import (
     AnalysisResponse,
     ComponentScores,
     JDComparison,
     SkillValidationDetails,
 )
-from backend.services.resume_analyzer import analyze_full_resume
-from backend.services.resume_parser import parse_resume_file
 
 logger = logging.getLogger("ats_resume_scorer")
 
@@ -46,40 +43,40 @@ async def analyze_resume(
 ):
     logger.info("========== NEW ANALYSIS REQUEST ==========")
 
+    # ✅ Lazy imports (IMPORTANT FOR RENDER)
+    from backend.core.model_loader import get_embedder
+    from backend.services.resume_parser import parse_resume_file
+    from backend.services.resume_analyzer import analyze_full_resume
+
     user_id = "debug-user"
 
     try:
         # ---------------- STEP 1 ----------------
-        logger.info("Step 1: Loading spaCy model")
+        logger.info("Loading spaCy model...")
         nlp = request.app.state.nlp
 
         # ---------------- STEP 2 ----------------
-        logger.info("Step 2: Loading SentenceTransformer embedder")
+        logger.info("Loading SentenceTransformer model...")
         embedder = get_embedder()
 
         # ---------------- STEP 3 ----------------
-        logger.info("Step 3: Reading uploaded resume")
-
         file_bytes = await resume.read()
         filename = resume.filename or "resume.pdf"
 
         logger.info(
-            "Uploaded file received | filename=%s | size=%d bytes | content_type=%s",
+            "Received file: %s (%d bytes)",
             filename,
             len(file_bytes),
-            resume.content_type,
         )
 
         resume_text, metadata = parse_resume_file(file_bytes, filename)
 
         logger.info(
-            "Resume parsed successfully | chars=%d",
+            "Resume parsed successfully (%d characters)",
             len(resume_text),
         )
 
         # ---------------- STEP 4 ----------------
-        logger.info("Step 4: Starting resume analysis")
-
         result = analyze_full_resume(
             resume_text=resume_text,
             nlp=nlp,
@@ -87,15 +84,15 @@ async def analyze_resume(
             job_description=job_description,
         )
 
-        logger.info("Resume analysis completed successfully.")
+        logger.info("Resume analysis completed.")
 
         # ---------------- STEP 5 ----------------
-        jd_comparison_result = None
+        jd_result = None
 
         if result.get("jd_comparison"):
             jd = result["jd_comparison"]
 
-            jd_comparison_result = JDComparison(
+            jd_result = JDComparison(
                 match_percentage=round(
                     float(jd.get("match_percentage", 0.0)),
                     1,
@@ -110,43 +107,33 @@ async def analyze_resume(
             )
 
         # ---------------- STEP 6 ----------------
-        svd = result.get("skill_validation_details", {})
-
         response = AnalysisResponse(
-            ATS_score=result.get("ats_score", 0),
+            ATS_score=result["ats_score"],
 
             component_scores=ComponentScores(
-                **result.get("component_scores", {})
+                **result["component_scores"]
             ),
 
-            issues_summary=result.get("issues_summary", []),
-            detailed_feedback=result.get("detailed_feedback", []),
+            issues_summary=result["issues_summary"],
+            detailed_feedback=result["detailed_feedback"],
 
-            jd_match_analysis=jd_comparison_result,
+            jd_match_analysis=jd_result,
 
             skill_validation_details=SkillValidationDetails(
-                **svd
+                **result["skill_validation_details"]
             ),
 
-            # -------- Legacy compatibility --------
-            ats_score=result.get("ats_score", 0),
-
-            keyword_match=(
-                jd_comparison_result.match_percentage
-                if jd_comparison_result
-                else 0
-            ),
-
-            matched_keywords=result.get("matched_keywords", []),
-            missing_keywords=result.get("missing_keywords", []),
-            skills=result.get("skills", [])[:20],
-            jd_comparison=jd_comparison_result,
+            # Backward compatibility
+            ats_score=result["ats_score"],
+            keyword_match=jd_result.match_percentage if jd_result else 0,
+            matched_keywords=result["matched_keywords"],
+            missing_keywords=result["missing_keywords"],
+            skills=result["skills"][:20],
+            jd_comparison=jd_result,
             interpretation=result.get("interpretation", ""),
         )
 
         # ---------------- STEP 7 ----------------
-        logger.info("Step 7: Saving analysis history")
-
         try:
             from backend.database.supabase_db import save_analysis
 
@@ -161,24 +148,18 @@ async def analyze_resume(
         except Exception as history_error:
             logger.warning(
                 "History save skipped: %s",
-                str(history_error),
+                history_error,
             )
 
         logger.info("========== ANALYSIS REQUEST COMPLETED ==========")
 
         return response
 
-    # --------------------------------------------------
-    # Error Handling (Useful for Render debugging)
-    # --------------------------------------------------
     except Exception as exc:
         logger.error("========== ANALYSIS FAILED ==========")
         logger.error(traceback.format_exc())
 
         raise HTTPException(
             status_code=500,
-            detail={
-                "error": str(exc),
-                "type": type(exc).__name__,
-            },
+            detail=str(exc),
         )
